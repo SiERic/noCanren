@@ -1,6 +1,6 @@
 OB = ocamlbuild -use-ocamlfind -classic-display
 
-TESTS = bottles bridge einstein GCW
+TESTS = bottles bridge einstein GCW pes
 
 compile:
 	$(OB) -I src noCanren.native
@@ -52,12 +52,7 @@ test: compile_tests
 		if diff -u regression/orig/${T}.log regression/output/${T}.log > regression/output/${T}.log.diff; \
 			then \
 				rm regression/output/${T}.log.diff; \
-				if diff -u regression/orig/${T}.ml regression/output/${T}.ml > regression/output/${T}.ml.diff; \
-					then \
-						rm regression/output/${T}.ml.diff; \
-						echo "${T}: PASSED"; \
-					else echo "${T}: FAILED (see regression/output/${T}.ml.diff)"; \
-				fi; \
+				echo "${T}: PASSED"; \
 			else echo "${T}: FAILED (see regression/output/${T}.log.diff)"; \
 		fi;)
 

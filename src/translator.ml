@@ -430,16 +430,16 @@ and translate_match loc s cases typ =
       let pat, vars  = translate_pat case.c_lhs create_fresh_var_name in
       let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
       let make_neg case = 
-        (let pat, _ = translate_pat case.c_lhs create_fresh_var_name in
-        [%expr [%e create_id scrutinee_var] =/= [%e pat]]) in
-      let neg  = List.map make_neg prev_cases in
-      let unify_big  = create_conj ([unify] @ neg) in
-      let body       = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
-      let abst_body  = List.fold_right create_fun vars body in
-      let subst      = List.map create_subst vars in
-      let total_body = create_apply abst_body subst in
-      let conj       = create_conj [unify_big; total_body] in
-      List.fold_right create_fresh vars conj in
+        (let pat, vars = translate_pat case.c_lhs create_fresh_var_name in
+        [%expr [%e create_id scrutinee_var] =/= [%e pat]], vars) in
+      let neg, neg_vars  = List.split (List.map make_neg prev_cases) in
+      let unify_big      = create_conj ([unify] @ neg) in
+      let body           = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
+      let abst_body      = List.fold_right create_fun vars body in
+      let subst          = List.map create_subst vars in
+      let total_body     = create_apply abst_body subst in
+      let conj           = create_conj [unify_big; total_body] in
+      List.fold_right create_fresh (vars @ (List.concat neg_vars)) conj in
 
     let rec helper prev_cases next_cases acc =
       (match next_cases with
