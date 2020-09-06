@@ -120,7 +120,7 @@ let create_conj = function
 
 
 let create_disj = function
-| []     -> failwith "Conjunction needs one or more arguments"
+| []     -> failwith "Disjunction needs one or more arguments"
 | [x]    -> x
 | [x; y] -> [%expr [%e x] ||| [%e y]]
 | l      -> create_apply_to_list [%expr conde] l
@@ -415,7 +415,7 @@ and translate_apply f a l =
                        | _ -> fail_loc l "Incorrect argument") a)
 
 and translate_match loc s cases typ =
-  if cases |> List.map (fun c -> c.c_lhs) |> is_disj_pats then
+  (* if cases |> List.map (fun c -> c.c_lhs) |> is_disj_pats then *)
     let high_extra_args = create_fresh_argument_names_by_args typ in
     let result_arg = create_fresh_var_name () in
     let extra_args = high_extra_args @ [result_arg] in
@@ -426,17 +426,31 @@ and translate_match loc s cases typ =
       let unify = [%expr [%e create_id v] === [%e create_id abs_v]] in
       create_fun abs_v unify in
 
-    let translate_case case =
+    let translate_case' case prev_cases =
       let pat, vars  = translate_pat case.c_lhs create_fresh_var_name in
       let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
+      let make_neg case = 
+        (let pat, _ = translate_pat case.c_lhs create_fresh_var_name in
+        [%expr [%e create_id scrutinee_var] =/= [%e pat]]) in
+      let neg  = List.map make_neg prev_cases in
+      let unify_big  = create_conj ([unify] @ neg) in
       let body       = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
       let abst_body  = List.fold_right create_fun vars body in
       let subst      = List.map create_subst vars in
       let total_body = create_apply abst_body subst in
-      let conj       = create_conj [unify; total_body] in
+      let conj       = create_conj [unify_big; total_body] in
       List.fold_right create_fresh vars conj in
 
-    let new_cases = List.map translate_case cases in
+    let rec helper prev_cases next_cases acc =
+      (match next_cases with
+        | []                -> acc
+        | case::next_cases' -> 
+          let new_case = translate_case' case prev_cases in
+            helper (prev_cases @ [case]) next_cases' ([new_case] @ acc)) in
+    let new_cases = helper [] cases [] in 
+
+
+    (* let new_cases = List.map translate_case cases in *)
     let disj      = create_disj new_cases in
     let scrutinee = create_apply (translate_expression s) [create_id scrutinee_var] in
     let scrutinee = { scrutinee with pexp_attributes = s.exp_attributes } in
@@ -445,7 +459,7 @@ and translate_match loc s cases typ =
     let with_res  = [%expr fun [%p create_logic_var result_arg] -> [%e fresh]] in
     List.fold_right create_fun high_extra_args with_res
 
-  else fail_loc loc "Pattern matching contains unified patterns"
+  (* else fail_loc loc "Pattern matching contains unified patterns" *)
 
 and translate_let flag bind expr =
   let nvb = Vb.mk (untyper.pat untyper bind.vb_pat) (translate_expression bind.vb_expr) in
