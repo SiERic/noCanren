@@ -1,8 +1,7 @@
-type kelo = Kek | Lol
-
-(* type he = Heh of kelo * kelo *)
+type kelo = Kek of bool | Lol | Heh
 
 let heho a = 
     match a with
-        | Kek -> Lol
-        | Lol -> Kek
+        | Kek (b) -> Heh
+        | Lol -> Lol
+        (* | _ -> Heh *)

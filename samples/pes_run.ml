@@ -4,8 +4,9 @@ open Tester
 open Pes
 
 let show_kelo = function
-    | Kek -> "1"
+    | Kek a -> "1"
     | Lol -> "0"
+    | Heh -> "2"
 
 (* let show_lkelo = show logic show_kelo *)
 
@@ -14,5 +15,5 @@ let heh q r = heho ((===) q) r
 
 let _ =
   run_exn show_kelo (1) q qh ("keks: ", fun q ->
-    heh q !! Kek
+    heh q !! Lol
   )

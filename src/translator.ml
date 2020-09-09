@@ -135,6 +135,9 @@ let create_fun var body =
 let create_fresh var body =
   create_apply [%expr call_fresh] [create_fun var body]
 
+let create_wc var body = 
+  create_apply [%expr wc] [create_fun var body]
+
 
 let create_inj expr = [%expr !! [%e expr]]
 
@@ -145,7 +148,7 @@ let filter_vars vars1 vars2 =
 let mark_type_declaration td =
     match td.typ_kind with
     | Ttype_variant cds -> { td with typ_attributes = [(mknoloc "put_distrib_here", Parsetree.PStr [])] }
-    | _                 -> fail_loc td.typ_loc "Incrorrect type declaration"
+    | _                 -> fail_loc td.typ_loc "Incorrect type declaration"
 
 let mark_constr expr = { expr with
   pexp_attributes = (mknoloc "it_was_constr", Parsetree.PStr []) :: expr.pexp_attributes }
@@ -460,27 +463,34 @@ and translate_match'' loc s cases typ =
       let unify = [%expr [%e create_id v] === [%e create_id abs_v]] in
       create_fun abs_v unify in
 
-    let translate_case' case prev_cases =
+    let translate_case_neg case =
+      let pat, vars  = translate_pat case.c_lhs create_fresh_var_name in
+      let unify      = [%expr [%e create_id scrutinee_var] =/= [%e pat]] in
+      let conj       = create_conj [unify] in
+      List.fold_right create_wc vars conj in
+
+    let translate_case case prev_cases =
       let pat, vars  = translate_pat case.c_lhs create_fresh_var_name in
       let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
-      let make_neg case = 
+      (* let make_neg case = 
         (let pat, vars = translate_pat case.c_lhs create_fresh_var_name in
-        [%expr [%e create_id scrutinee_var] =/= [%e pat]], vars) in
-      let neg, neg_vars  = List.split (List.map make_neg prev_cases) in
-      let unify_big      = create_conj ([unify] @ neg) in
+        [%expr [%e create_id scrutinee_var] =/= [%e pat]], vars) in *)
+      (* let neg, neg_vars  = List.split (List.map make_neg prev_cases) in *)
+      let unify_big      = create_conj ([unify] @ prev_cases) in
       let body           = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
       let abst_body      = List.fold_right create_fun vars body in
       let subst          = List.map create_subst vars in
       let total_body     = create_apply abst_body subst in
       let conj           = create_conj [unify_big; total_body] in
-      List.fold_right create_fresh (vars @ (List.concat neg_vars)) conj in
+      List.fold_right create_fresh vars conj in
 
     let rec helper prev_cases next_cases acc =
       (match next_cases with
         | []                -> acc
         | case::next_cases' -> 
-          let new_case = translate_case' case prev_cases in
-            helper (prev_cases @ [case]) next_cases' ([new_case] @ acc)) in
+          let new_case = translate_case case prev_cases in
+          let new_case_neg = translate_case_neg case in
+            helper (prev_cases @ [new_case_neg]) next_cases' ([new_case] @ acc)) in
     let new_cases = helper [] cases [] in 
 
 
@@ -618,7 +628,7 @@ and translate_match''' loc s cases typ =
 
   translate_match' loc s (List.map (fun (lhs, rhs) -> {c_lhs=(List.hd lhs); c_guard=None; c_rhs=rhs}) kek_cases) typ
 
-and translate_match loc s cases typ = translate_match''' loc s cases typ
+and translate_match loc s cases typ = translate_match'' loc s cases typ
 
 and translate_let flag bind expr =
   let nvb = Vb.mk (untyper.pat untyper bind.vb_pat) (translate_expression bind.vb_expr) in
