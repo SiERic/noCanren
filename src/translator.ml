@@ -16,6 +16,7 @@ open Asttypes
 open Lexing
 open Location
 open Parsetree
+open Types
 
 (*****************************************************************************************************************************)
 
@@ -120,7 +121,8 @@ let create_conj = function
 
 
 let create_disj = function
-| []     -> failwith "Disjunction needs one or more arguments"
+(* | []     -> failwith "Disjunction needs one or more arguments" *)
+| [] -> [%expr success]
 | [x]    -> x
 | [x; y] -> [%expr [%e x] ||| [%e y]]
 | l      -> create_apply_to_list [%expr conde] l
@@ -414,8 +416,40 @@ and translate_apply f a l =
                                        else translate_expression e
                        | _ -> fail_loc l "Incorrect argument") a)
 
-and translate_match loc s cases typ =
-  (* if cases |> List.map (fun c -> c.c_lhs) |> is_disj_pats then *)
+and translate_match' loc s cases typ =
+  if cases |> List.map (fun c -> c.c_lhs) |> is_disj_pats then
+    let high_extra_args = create_fresh_argument_names_by_args typ in
+    let result_arg = create_fresh_var_name () in
+    let extra_args = high_extra_args @ [result_arg] in
+    let scrutinee_var = create_fresh_var_name () in
+
+    let create_subst v =
+      let abs_v = create_fresh_var_name () in
+      let unify = [%expr [%e create_id v] === [%e create_id abs_v]] in
+      create_fun abs_v unify in
+
+    let translate_case case =
+      let pat, vars  = translate_pat case.c_lhs create_fresh_var_name in
+      let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
+      let body       = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
+      let abst_body  = List.fold_right create_fun vars body in
+      let subst      = List.map create_subst vars in
+      let total_body = create_apply abst_body subst in
+      let conj       = create_conj [unify; total_body] in
+      List.fold_right create_fresh vars conj in
+
+    let new_cases = List.map translate_case cases in
+    let disj      = create_disj new_cases in
+    let scrutinee = create_apply (translate_expression s) [create_id scrutinee_var] in
+    let scrutinee = { scrutinee with pexp_attributes = s.exp_attributes } in
+    let conj      = create_conj [scrutinee; disj] in
+    let fresh     = create_fresh scrutinee_var conj in
+    let with_res  = [%expr fun [%p create_logic_var result_arg] -> [%e fresh]] in
+    List.fold_right create_fun high_extra_args with_res
+
+  else fail_loc loc "Pattern matching contains unified patterns"
+
+and translate_match'' loc s cases typ =
     let high_extra_args = create_fresh_argument_names_by_args typ in
     let result_arg = create_fresh_var_name () in
     let extra_args = high_extra_args @ [result_arg] in
@@ -459,7 +493,125 @@ and translate_match loc s cases typ =
     let with_res  = [%expr fun [%p create_logic_var result_arg] -> [%e fresh]] in
     List.fold_right create_fun high_extra_args with_res
 
-  (* else fail_loc loc "Pattern matching contains unified patterns" *)
+and translate_match''' loc s cases typ =
+
+  let expand cases = 
+  (* (c(x, y))(b)(d) -> (x)(y)(b)(d)  *)
+  (* (c_lhs list, c_rhs) -> (c_lhs list, c_rhs)  *)
+    let expand_one case =
+      let (first_constr :: other_constrs, body) = case in
+      let args = (fun (Tpat_construct (_, _, args)) -> args) first_constr.pat_desc in
+      (args @ other_constrs, body) in
+    List.map (expand_one) cases in
+
+  let get_name pat =
+        (match pat.pat_desc with
+          | (Tpat_construct (_, c, _)) -> c.cstr_name
+          | (Tpat_any) -> "___"
+        ) in
+
+  let specify_by_first_constr cases : (Typedtree.pattern list * 'a) list list =
+
+    let first_pats = (fun (pats, _) -> pats) (List.hd cases) in
+    if (List.length first_pats = 0)
+    then [cases]
+    else 
+      let is_wildcard pat =
+        (match pat.pat_desc with
+          | Tpat_var _      -> true
+          | Tpat_any        -> true
+          | _               -> false) in
+      if not (List.exists (fun (pats, _) -> not (is_wildcard (List.hd pats))) cases)
+      then [cases]
+      else
+        let constr_line = (List.find (fun (pats, _) -> not (is_wildcard (List.hd pats))) cases) in
+        let some_constr  = List.hd ((fun (x, _) -> x) constr_line) in
+
+        let rec get_variant_constructors env ty =
+          (match (Ctype.repr ty).desc with
+          | Tconstr (path,_,_) -> begin
+              match Env.find_type path env with
+              | {type_kind=Type_variant _} ->
+                  fst (Env.find_type_descrs path env)
+            end) in
+
+        let c = match some_constr.pat_desc with Tpat_construct (_, c, _) -> c | _ -> assert false in
+
+        Printf.printf "\n Aaaaa: %s\n" ((fun (Tpat_construct (_, c, _)) -> c.cstr_name) some_constr.pat_desc);
+
+        let constrs1 = get_variant_constructors some_constr.pat_env c.cstr_res in
+
+        let constrs = List.map (Parmatch.pat_of_constr some_constr) constrs1 in
+
+        List.iter (Printf.printf "B: %s\n") (List.map (get_name) constrs);
+
+          let filter_by_constr cases constr =
+            let filter_one_by_constr constr case =
+              let (Tpat_construct (txt, kek, args)) = constr.pat_desc in
+              let (pat :: others, body) = case in
+              (* let replace_vars v body  = *)
+              (match pat.pat_desc with
+                | (Tpat_construct (_, _, _)) when get_name pat = get_name constr -> [case]
+                | Tpat_any -> [(({constr with pat_desc = Tpat_construct (txt, kek, List.map (fun _ -> pat) args )}) :: others, body)]
+                (* | Tpat_any -> [(constr :: others, body)] *)
+                (* | Tpat_var (v, _)                               -> 
+                        [(Tpat_construct ({txt, kek, List.map (fun _ -> Tpat_any) args }) :: others, replace_vars v body )] *)
+                | _ -> []) in
+              List.concat (List.map (filter_one_by_constr constr) cases) in
+
+        List.iter (fun constr -> Printf.printf "\n %s %d\n" (get_name constr) (List.length ((filter_by_constr cases) constr))) constrs;
+
+        List.map (filter_by_constr cases) constrs in
+
+    let rec go cases : (Typedtree.pattern list * 'a) list = 
+      if (List.length cases <= 1) 
+      then cases
+      else let specified_cases = specify_by_first_constr cases in
+
+      let deal_with_constr_type cases : (Typedtree.pattern list * 'a) list =
+        (* List.iter (fun (pat :: _, _) -> Printf.printf "Uuu: \n %s \n" (get_name pat)) cases; *)
+
+        if (List.length cases <= 1)
+        then cases
+        else 
+          let first_line = List.hd cases in
+          Printf.printf "!!!!!!!\n";
+          let first_line_pats = ((fun (x, _) -> x) first_line) in
+          if ((List.length first_line_pats) = 0)
+          then [first_line]
+          else 
+            let first_constr = List.hd first_line_pats in
+            Printf.printf "11111111\n";
+            (match first_constr.pat_desc with 
+              | Tpat_construct (_, _, []) ->
+                (* конструктор без параметров *)
+                let rm_first = List.map (fun (pats, body) -> (List.tl pats, body)) cases in
+                 Printf.printf "22222222\n";
+                let new_cases = go rm_first in
+                Printf.printf "% d\n" (List.length new_cases);
+                List.map (fun (pats, body) -> ([first_constr] @ pats, body)) new_cases
+              | Tpat_construct (txt, kek, args) -> 
+                let expanded_cases = expand cases in
+                let new_cases = go expanded_cases in
+                let rec takek x = (function
+                  | 0 -> [], x
+                  | k -> (match x with 
+                  | x::xs -> let (left, right) = takek xs (k - 1) in
+                      (x :: left, right))) in
+                let build case =
+                  let (pats, body) = case in
+                  let new_args, new_rest = takek pats (List.length args) in 
+                  ({first_constr with pat_desc = Tpat_construct (txt, kek, new_args)} :: new_rest, body) in 
+                
+                List.map build cases) in
+
+      List.concat (List.map deal_with_constr_type specified_cases) in
+
+  let kek_cases = (go (List.map (fun case -> ([case.c_lhs], case.c_rhs)) cases)) in
+
+  translate_match' loc s (List.map (fun (lhs, rhs) -> {c_lhs=(List.hd lhs); c_guard=None; c_rhs=rhs}) kek_cases) typ
+
+and translate_match loc s cases typ = translate_match''' loc s cases typ
 
 and translate_let flag bind expr =
   let nvb = Vb.mk (untyper.pat untyper bind.vb_pat) (translate_expression bind.vb_expr) in
