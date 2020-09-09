@@ -510,6 +510,11 @@ and translate_match''' loc s cases typ =
           | (Tpat_any) -> "___"
         ) in
 
+  let pat_of_constr ex_pat cstr =
+    {ex_pat with pat_desc =
+     Tpat_construct (mknoloc (Longident.Lident cstr.cstr_name),
+                     cstr, Parmatch.omegas cstr.cstr_arity)} in
+
   let specify_by_first_constr cases : (Typedtree.pattern list * 'a) list list =
 
     let first_pats = (fun (pats, _) -> pats) (List.hd cases) in
@@ -541,7 +546,9 @@ and translate_match''' loc s cases typ =
 
         let constrs1 = get_variant_constructors some_constr.pat_env c.cstr_res in
 
-        let constrs = List.map (Parmatch.pat_of_constr some_constr) constrs1 in
+        List.iter (Printf.printf "C: %s\n") (List.map (fun x -> x.cstr_name) constrs1);
+
+        let constrs = List.map (pat_of_constr some_constr) constrs1 in
 
         List.iter (Printf.printf "B: %s\n") (List.map (get_name) constrs);
 
@@ -554,8 +561,8 @@ and translate_match''' loc s cases typ =
                 | (Tpat_construct (_, _, _)) when get_name pat = get_name constr -> [case]
                 | Tpat_any -> [(({constr with pat_desc = Tpat_construct (txt, kek, List.map (fun _ -> pat) args )}) :: others, body)]
                 (* | Tpat_any -> [(constr :: others, body)] *)
-                (* | Tpat_var (v, _)                               -> 
-                        [(Tpat_construct ({txt, kek, List.map (fun _ -> Tpat_any) args }) :: others, replace_vars v body )] *)
+                (* | Tpat_var (v, _)                               ->  *)
+                        (* [(({constr with pat_desc = Tpat_construct (txt, kek, List.map (fun _ -> {constr with pat_desc = Tpat_any }) args )}) :: others, replace_var v constr body)] *)
                 | _ -> []) in
               List.concat (List.map (filter_one_by_constr constr) cases) in
 
