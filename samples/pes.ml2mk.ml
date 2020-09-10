@@ -1,7 +1,9 @@
-type kelo = Kek of bool | Lol | Heh
+type keloboo = Tru | Fls
+
+type kelo = Kek of keloboo | Lol | Heh
 
 let heho a = 
     match a with
-        | Kek (b) -> Heh
-        | Lol -> Lol
-        (* | _ -> Heh *)
+        | Lol -> Fls
+        | Kek (_) -> Tru
+        | _ -> Fls

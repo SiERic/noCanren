@@ -526,8 +526,8 @@ and translate_match''' loc s cases typ =
                      cstr, Parmatch.omegas cstr.cstr_arity)} in
 
   let specify_by_first_constr cases : (Typedtree.pattern list * 'a) list list =
-
     let first_pats = (fun (pats, _) -> pats) (List.hd cases) in
+    Printf.printf "Bubibu: %d\n" (List.length first_pats);
     if (List.length first_pats = 0)
     then [cases]
     else 
@@ -537,7 +537,7 @@ and translate_match''' loc s cases typ =
           | Tpat_any        -> true
           | _               -> false) in
       if not (List.exists (fun (pats, _) -> not (is_wildcard (List.hd pats))) cases)
-      then [cases]
+      then (Printf.printf "All wild\n"; [[List.hd cases]])
       else
         let constr_line = (List.find (fun (pats, _) -> not (is_wildcard (List.hd pats))) cases) in
         let some_constr  = List.hd ((fun (x, _) -> x) constr_line) in
@@ -586,8 +586,8 @@ and translate_match''' loc s cases typ =
       else let specified_cases = specify_by_first_constr cases in
 
       let deal_with_constr_type cases : (Typedtree.pattern list * 'a) list =
-        (* List.iter (fun (pat :: _, _) -> Printf.printf "Uuu: \n %s \n" (get_name pat)) cases; *)
-
+        List.iter (fun x -> match x with | (pat :: _, _) -> Printf.printf "Uuu: \n %s \n" (get_name pat) | _ -> Printf.printf "Empty\n") cases;
+        (* if (List.length cases > 0) Printf.printf "Start: %s \n\n" (get_name ((fun (pats, _) -> List.hd pats) (List.hd cases) ));  *)
         if (List.length cases <= 1)
         then cases
         else 
@@ -599,6 +599,7 @@ and translate_match''' loc s cases typ =
           else 
             let first_constr = List.hd first_line_pats in
             Printf.printf "11111111\n";
+            Printf.printf "Start: %s\n" (get_name first_constr);
             (match first_constr.pat_desc with 
               | Tpat_construct (_, _, []) ->
                 (* конструктор без параметров *)
@@ -620,7 +621,7 @@ and translate_match''' loc s cases typ =
                   let new_args, new_rest = takek pats (List.length args) in 
                   ({first_constr with pat_desc = Tpat_construct (txt, kek, new_args)} :: new_rest, body) in 
                 
-                List.map build cases) in
+                List.map build new_cases) in
 
       List.concat (List.map deal_with_constr_type specified_cases) in
 
@@ -628,7 +629,7 @@ and translate_match''' loc s cases typ =
 
   translate_match' loc s (List.map (fun (lhs, rhs) -> {c_lhs=(List.hd lhs); c_guard=None; c_rhs=rhs}) kek_cases) typ
 
-and translate_match loc s cases typ = translate_match'' loc s cases typ
+and translate_match loc s cases typ = translate_match''' loc s cases typ
 
 and translate_let flag bind expr =
   let nvb = Vb.mk (untyper.pat untyper bind.vb_pat) (translate_expression bind.vb_expr) in
