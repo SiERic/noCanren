@@ -121,8 +121,8 @@ let create_conj = function
 
 
 let create_disj = function
-(* | []     -> failwith "Disjunction needs one or more arguments" *)
-| [] -> [%expr success]
+| []     -> failwith "Disjunction needs one or more arguments"
+(* | [] -> [%expr success] *)
 | [x]    -> x
 | [x; y] -> [%expr [%e x] ||| [%e y]]
 | l      -> create_apply_to_list [%expr conde] l
@@ -472,10 +472,6 @@ and translate_match'' loc s cases typ =
     let translate_case case prev_cases =
       let pat, vars  = translate_pat case.c_lhs create_fresh_var_name in
       let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
-      (* let make_neg case = 
-        (let pat, vars = translate_pat case.c_lhs create_fresh_var_name in
-        [%expr [%e create_id scrutinee_var] =/= [%e pat]], vars) in *)
-      (* let neg, neg_vars  = List.split (List.map make_neg prev_cases) in *)
       let unify_big      = create_conj ([unify] @ prev_cases) in
       let body           = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
       let abst_body      = List.fold_right create_fun vars body in
@@ -493,8 +489,6 @@ and translate_match'' loc s cases typ =
             helper (prev_cases @ [new_case_neg]) next_cases' ([new_case] @ acc)) in
     let new_cases = helper [] cases [] in 
 
-
-    (* let new_cases = List.map translate_case cases in *)
     let disj      = create_disj new_cases in
     let scrutinee = create_apply (translate_expression s) [create_id scrutinee_var] in
     let scrutinee = { scrutinee with pexp_attributes = s.exp_attributes } in
@@ -504,6 +498,30 @@ and translate_match'' loc s cases typ =
     List.fold_right create_fun high_extra_args with_res
 
 and translate_match''' loc s cases typ =
+
+  let high_extra_args = create_fresh_argument_names_by_args typ in
+  let result_arg = create_fresh_var_name () in
+  let extra_args = high_extra_args @ [result_arg] in
+  let scrutinee_var = create_fresh_var_name () in
+
+  let create_subst v =
+    let abs_v = create_fresh_var_name () in
+    let unify = [%expr [%e create_id v] === [%e create_id abs_v]] in
+    create_fun abs_v unify in
+
+  let translate_body rhs = 
+    create_apply (translate_expression rhs) (List.map create_id extra_args) in
+
+  let translate_case case =
+    let lhs, body = (fun (pats, body) -> (List.hd pats, body)) case in
+    let pat, vars  = translate_pat lhs create_fresh_var_name in
+    let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
+    (* let body       = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in *)
+    let abst_body  = List.fold_right create_fun vars body in
+    let subst      = List.map create_subst vars in
+    let total_body = create_apply abst_body subst in
+    let conj       = create_conj [unify; total_body] in
+    List.fold_right create_fresh vars conj in
 
   let expand cases = 
   (* (c(x, y))(b)(d) -> (x)(y)(b)(d)  *)
@@ -525,9 +543,8 @@ and translate_match''' loc s cases typ =
      Tpat_construct (mknoloc (Longident.Lident cstr.cstr_name),
                      cstr, Parmatch.omegas cstr.cstr_arity)} in
 
-  let specify_by_first_constr cases : (Typedtree.pattern list * 'a) list list =
+  let specify_by_first_constr cases : (Typedtree.pattern list * Parsetree.expression) list list =
     let first_pats = (fun (pats, _) -> pats) (List.hd cases) in
-    Printf.printf "Bubibu: %d\n" (List.length first_pats);
     if (List.length first_pats = 0)
     then [cases]
     else 
@@ -537,7 +554,7 @@ and translate_match''' loc s cases typ =
           | Tpat_any        -> true
           | _               -> false) in
       if not (List.exists (fun (pats, _) -> not (is_wildcard (List.hd pats))) cases)
-      then (Printf.printf "All wild\n"; [[List.hd cases]])
+      then [[List.hd cases]]
       else
         let constr_line = (List.find (fun (pats, _) -> not (is_wildcard (List.hd pats))) cases) in
         let some_constr  = List.hd ((fun (x, _) -> x) constr_line) in
@@ -552,61 +569,47 @@ and translate_match''' loc s cases typ =
 
         let c = match some_constr.pat_desc with Tpat_construct (_, c, _) -> c | _ -> assert false in
 
-        Printf.printf "\n Aaaaa: %s\n" ((fun (Tpat_construct (_, c, _)) -> c.cstr_name) some_constr.pat_desc);
-
         let constrs1 = get_variant_constructors some_constr.pat_env c.cstr_res in
-
-        List.iter (Printf.printf "C: %s\n") (List.map (fun x -> x.cstr_name) constrs1);
 
         let constrs = List.map (pat_of_constr some_constr) constrs1 in
 
-        List.iter (Printf.printf "B: %s\n") (List.map (get_name) constrs);
-
           let filter_by_constr cases constr =
-            let filter_one_by_constr constr case =
-              let (Tpat_construct (txt, kek, args)) = constr.pat_desc in
+            let filter_one_by_constr constr case : (Typedtree.pattern list * Parsetree.expression) list  =
+              let (Tpat_construct (id, kek, args)) = constr.pat_desc in
               let (pat :: others, body) = case in
-              (* let replace_vars v body  = *)
               (match pat.pat_desc with
                 | (Tpat_construct (_, _, _)) when get_name pat = get_name constr -> [case]
-                | Tpat_any -> [(({constr with pat_desc = Tpat_construct (txt, kek, List.map (fun _ -> pat) args )}) :: others, body)]
-                (* | Tpat_any -> [(constr :: others, body)] *)
-                (* | Tpat_var (v, _)                               ->  *)
-                        (* [(({constr with pat_desc = Tpat_construct (txt, kek, List.map (fun _ -> {constr with pat_desc = Tpat_any }) args )}) :: others, replace_var v constr body)] *)
+                | Tpat_any -> 
+                  [(({constr with pat_desc = Tpat_construct (id, kek, List.map (fun _ -> pat) args )}) :: others, body)]
+                | Tpat_var (v, keks) -> 
+                  let new_vars = List.map (fun _ -> create_fresh_var_name ()) args in
+                  let constr' = [%expr [%e lowercase_lident id.txt |> mknoloc |> Exp.ident]] in
+                  let new_body = create_apply ([%expr fun [%p create_pat (name v)] -> [%e body]]) [(create_apply (mark_constr constr') (List.map (fun vr -> create_id vr) new_vars))] in
+                  [(({constr with pat_desc = Tpat_construct (id, kek, List.map (fun vr -> {constr with pat_desc = Tpat_var (create_persistent vr, keks)}) new_vars )}) :: others, new_body)]
                 | _ -> []) in
               List.concat (List.map (filter_one_by_constr constr) cases) in
 
-        List.iter (fun constr -> Printf.printf "\n %s %d\n" (get_name constr) (List.length ((filter_by_constr cases) constr))) constrs;
-
         List.map (filter_by_constr cases) constrs in
 
-    let rec go cases : (Typedtree.pattern list * 'a) list = 
+    let rec go cases : (Typedtree.pattern list * Parsetree.expression) list = 
       if (List.length cases <= 1) 
       then cases
       else let specified_cases = specify_by_first_constr cases in
 
       let deal_with_constr_type cases : (Typedtree.pattern list * 'a) list =
-        List.iter (fun x -> match x with | (pat :: _, _) -> Printf.printf "Uuu: \n %s \n" (get_name pat) | _ -> Printf.printf "Empty\n") cases;
-        (* if (List.length cases > 0) Printf.printf "Start: %s \n\n" (get_name ((fun (pats, _) -> List.hd pats) (List.hd cases) ));  *)
         if (List.length cases <= 1)
         then cases
         else 
           let first_line = List.hd cases in
-          Printf.printf "!!!!!!!\n";
           let first_line_pats = ((fun (x, _) -> x) first_line) in
           if ((List.length first_line_pats) = 0)
           then [first_line]
           else 
             let first_constr = List.hd first_line_pats in
-            Printf.printf "11111111\n";
-            Printf.printf "Start: %s\n" (get_name first_constr);
             (match first_constr.pat_desc with 
               | Tpat_construct (_, _, []) ->
-                (* конструктор без параметров *)
                 let rm_first = List.map (fun (pats, body) -> (List.tl pats, body)) cases in
-                 Printf.printf "22222222\n";
                 let new_cases = go rm_first in
-                Printf.printf "% d\n" (List.length new_cases);
                 List.map (fun (pats, body) -> ([first_constr] @ pats, body)) new_cases
               | Tpat_construct (txt, kek, args) -> 
                 let expanded_cases = expand cases in
@@ -625,9 +628,15 @@ and translate_match''' loc s cases typ =
 
       List.concat (List.map deal_with_constr_type specified_cases) in
 
-  let kek_cases = (go (List.map (fun case -> ([case.c_lhs], case.c_rhs)) cases)) in
-
-  translate_match' loc s (List.map (fun (lhs, rhs) -> {c_lhs=(List.hd lhs); c_guard=None; c_rhs=rhs}) kek_cases) typ
+  let cases = (go (List.map (fun case -> ([case.c_lhs], translate_body case.c_rhs)) cases)) in
+  let new_cases = List.map translate_case cases in
+  let disj      = create_disj new_cases in
+  let scrutinee = create_apply (translate_expression s) [create_id scrutinee_var] in
+  let scrutinee = { scrutinee with pexp_attributes = s.exp_attributes } in
+  let conj      = create_conj [scrutinee; disj] in
+  let fresh     = create_fresh scrutinee_var conj in
+  let with_res  = [%expr fun [%p create_logic_var result_arg] -> [%e fresh]] in
+  List.fold_right create_fun high_extra_args with_res
 
 and translate_match loc s cases typ = translate_match''' loc s cases typ
 
