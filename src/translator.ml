@@ -509,17 +509,24 @@ and translate_match''' loc s cases typ =
     let unify = [%expr [%e create_id v] === [%e create_id abs_v]] in
     create_fun abs_v unify in
 
-  let translate_body rhs = 
-    create_apply (translate_expression rhs) (List.map create_id extra_args) in
+  let translate_body case = 
+    let lhs = case.c_lhs in 
+    let body = case.c_rhs in
+    let pat, vars  = translate_pat lhs create_fresh_var_name in
+    (* let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in *)
+    let body       = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in
+    let abst_body  = List.fold_right create_fun vars body in
+    let subst      = List.map create_subst vars in
+    create_apply abst_body subst in
 
   let translate_case case =
-    let lhs, body = (fun (pats, body) -> (List.hd pats, body)) case in
+    let lhs, total_body = (fun (pats, body) -> (List.hd pats, body)) case in
     let pat, vars  = translate_pat lhs create_fresh_var_name in
     let unify      = [%expr [%e create_id scrutinee_var] === [%e pat]] in
     (* let body       = create_apply (translate_expression case.c_rhs) (List.map create_id extra_args) in *)
-    let abst_body  = List.fold_right create_fun vars body in
-    let subst      = List.map create_subst vars in
-    let total_body = create_apply abst_body subst in
+    (* let abst_body  = List.fold_right create_fun vars body in *)
+    (* let subst      = List.map create_subst vars in *)
+    (* let total_body = create_apply abst_body subst in *)
     let conj       = create_conj [unify; total_body] in
     List.fold_right create_fresh vars conj in
 
@@ -584,7 +591,11 @@ and translate_match''' loc s cases typ =
                 | Tpat_var (v, keks) -> 
                   let new_vars = List.map (fun _ -> create_fresh_var_name ()) args in
                   let constr' = [%expr [%e lowercase_lident id.txt |> mknoloc |> Exp.ident]] in
-                  let new_body = create_apply ([%expr fun [%p create_pat (name v)] -> [%e body]]) [(create_apply (mark_constr constr') (List.map (fun vr -> create_id vr) new_vars))] in
+                  let new_constr = 
+                    (match List.length args with
+                      | 0 -> [%expr [%e lowercase_lident id.txt |> mknoloc |> Exp.ident |> mark_constr] ()]
+                      | _ -> (create_apply (mark_constr constr') (List.map (fun vr -> create_id vr) new_vars))) in
+                  let new_body = create_apply (create_fun (name v) body) [new_constr] in
                   [(({constr with pat_desc = Tpat_construct (id, kek, List.map (fun vr -> {constr with pat_desc = Tpat_var (create_persistent vr, keks)}) new_vars )}) :: others, new_body)]
                 | _ -> []) in
               List.concat (List.map (filter_one_by_constr constr) cases) in
@@ -628,7 +639,7 @@ and translate_match''' loc s cases typ =
 
       List.concat (List.map deal_with_constr_type specified_cases) in
 
-  let cases = (go (List.map (fun case -> ([case.c_lhs], translate_body case.c_rhs)) cases)) in
+  let cases = (go (List.map (fun case -> ([case.c_lhs], translate_body case)) cases)) in
   let new_cases = List.map translate_case cases in
   let disj      = create_disj new_cases in
   let scrutinee = create_apply (translate_expression s) [create_id scrutinee_var] in
