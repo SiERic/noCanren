@@ -1,0 +1,1 @@
+<*.*>: rectypes, syntax(camlp5o), package(mtime,mtime.clock.os,GT,GT.syntax.all,ocanren,ocanren.syntax,ocanren.tester)
